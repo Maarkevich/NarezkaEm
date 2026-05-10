@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="theme-color" content="#4A90E2">
+    <title>NarezkaEm</title>
+    <link rel="manifest" href="manifest.json">
+    <!-- apple-touch-icon будет установлен динамически из SVG -->
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        html, body {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f0f2f5;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            /* Учёт вырезов и островов */
+            padding-top: env(safe-area-inset-top);
+            padding-right: env(safe-area-inset-right);
+            padding-bottom: env(safe-area-inset-bottom);
+            padding-left: env(safe-area-inset-left);
+            user-select: none;
+            -webkit-user-select: none;
+            touch-action: none; /* предотвращаем жесты браузера */
+        }
+
+        .app {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            width: 100%;
+            max-width: 500px;
+            height: 100%;
+            padding: 12px;
+            gap: 16px;
+        }
+
+        h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: #4A90E2;
+            margin-top: 8px;
+        }
+
+        .canvas-wrapper {
+            position: relative;
+            width: min(80vw, 80vh - 120px, 400px);
+            height: min(80vw, 80vh - 120px, 400px);
+            border: 2px solid #ccc;
+            background: white;
+            flex-shrink: 0;
+        }
+
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+
+        .controls {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 12px;
+            width: 100%;
+        }
+
+        .file-label {
+            background: #4A90E2;
+            color: white;
+            padding: 10px 24px;
+            border-radius: 24px;
+            font-weight: 500;
+            cursor: pointer;
+            display: inline-block;
+        }
+
+        input[type="file"] {
+            display: none;
+        }
+
+        .size-selector {
+            display: flex;
+            gap: 16px;
+            font-size: 0.95rem;
+        }
+
+        .size-selector label {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            cursor: pointer;
+        }
+
+        .download-btn {
+            background: #27ae60;
+            color: white;
+            border: none;
+            padding: 12px 28px;
+            border-radius: 24px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        .download-btn:active {
+            background: #219a52;
+        }
+
+        .status {
+            font-size: 0.85rem;
+            color: #666;
+            min-height: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="app">
+        <h1>NarezkaEm</h1>
+        <div class="canvas-wrapper" id="canvasWrapper">
+            <canvas id="mainCanvas"></canvas>
+        </div>
+        <div class="controls">
+            <label class="file-label" for="fileInput">Выбрать изображение</label>
+            <input type="file" id="fileInput" accept="image/*">
+            <div class="size-selector">
+                <label>
+                    <input type="radio" name="size" value="100" checked> 100×100 (эмодзи)
+                </label>
+                <label>
+                    <input type="radio" name="size" value="512"> 512×512 (стикеры)
+                </label>
+            </div>
+            <button class="download-btn" id="downloadBtn">Скачать 4 части</button>
+            <div class="status" id="status"></div>
+        </div>
+    </div>
+
+    <script>
+        // ========== Учёт iOS безопасных зон ==========
+        // Динамически генерируем apple-touch-icon из SVG
+        (function() {
+            const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+                <rect width="512" height="512" fill="#4A90E2" rx="64"/>
+                <g stroke="#fff" stroke-width="8" stroke-dasharray="20,20">
+                    <line x1="256" y1="0" x2="256" y2="512"/>
+                    <line x1="0" y1="256" x2="512" y2="256"/>
+                </g>
+            </svg>`;
+            const blob = new Blob([svg], {type: 'image/svg+xml'});
+            const url = URL.createObjectURL(blob);
+            const img = new Image();
+            img.onload = () => {
+                const canvas = document.createElement('canvas');
+                canvas.width = 180;
+                canvas.height = 180;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0, 180, 180);
+                canvas.toBlob((blob) => {
+                    const iconUrl = URL.createObjectURL(blob);
+                    const link = document.createElement('link');
+                    link.rel = 'apple-touch-icon';
+                    link.href = iconUrl;
+                    document.head.appendChild(link);
+                    URL.revokeObjectURL(url);
+                }, 'image/png');
+            };
+            img.src = url;
+        })();
+
+        // ========== Основной код ==========
+        const canvas = document.getElementById('mainCanvas');
+        const ctx = canvas.getContext('2d');
+        const wrapper = document.getElementById('canvasWrapper');
+        const fileInput = document.getElementById('fileInput');
+        const downloadBtn = document.getElementById('downloadBtn');
+        const statusDiv = document.getElementById('status');
+
+        const LOGICAL_SIZE = 400; // логический размер холста
+        let dpr = window.devicePixelRatio || 1;
+        let img = null;            // объект Image
+        let imgLoaded = false;
+
+        // Состояние трансформации (относительно логической рамки)
+        let scale = 1;
+        let offsetX = 0;
+        let offsetY = 0;
+
+        // Базовые значения для жестов
+        let baseScale = 1;
+        let baseOffsetX = 0;
+        let baseOffsetY = 0;
+
+        // Инициализация холста
+        function resizeCanvas() {
+            const rect = wrapper.getBoundingClientRect();
+            const size = rect.width;
+            canvas.width = size * dpr;
+            canvas.height = size * dpr;
+            canvas.style.width = size + 'px';
+            canvas.style.height = size + 'px';
+        }
+
+        window.addEventListener('resize', () => {
+            resizeCanvas();
+            redraw();
+        });
+        resizeCanvas();
+
+        // Загрузка изображения
+        fileInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (ev) => {
+                img = new Image();
+                img.onload = () => {
+                    imgLoaded = true;
+                    // Сброс трансформации: масштабируем так, чтобы картинка точно вписалась в квадрат
+                    const logSize = LOGICAL_SIZE;
+                    const imgSize = Math.max(img.width, img.height); // т.к. квадрат
+                    scale = logSize / imgSize;
+                    offsetX = 0;
+                    offsetY = 0;
+                    baseScale = scale;
+                    baseOffsetX = 0;
+                    baseOffsetY = 0;
+                    redraw();
+                    statusDiv.textContent = 'Изображение загружено';
+                };
+                img.src = ev.target.result;
+            };
+            reader.readAsDataURL(file);
+        });
+
+        // Рисование
+        function redraw() {
+            if (!canvas || !ctx) return;
+            const w = canvas.width;
+            const h = canvas.height;
+            ctx.clearRect(0, 0, w, h);
+
+            ctx.save();
+            // Масштаб под retina
+            ctx.scale(dpr, dpr);
+
+            if (img && imgLoaded) {
+                // Применяем пользовательскую трансформацию
+                ctx.translate(offsetX, offsetY);
+                ctx.scale(scale, scale);
+                ctx.drawImage(img, 0, 0, img.width, img.height);
+            }
+
+            // Пунктирное перекрестие поверх изображения (в логических координатах)
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // сбрасываем трансформацию
+            const half = LOGICAL_SIZE / 2;
+            ctx.beginPath();
+            ctx.strokeStyle = 'rgba(0,0,0,0.4)';
+            ctx.lineWidth = 0.5;
+            ctx.setLineDash([6, 6]);
+            // вертикаль
+            ctx.moveTo(half, 0);
+            ctx.lineTo(half, LOGICAL_SIZE);
+            // горизонталь
+            ctx.moveTo(0, half);
+            ctx.lineTo(LOGICAL_SIZE, half);
+            ctx.stroke();
+            ctx.setLineDash([]); // сброс
+            ctx.restore();
+        }
+
+        // ========== Pan & Zoom (мышь + тач) ==========
+        function getCanvasPos(e) {
+            const rect = canvas.getBoundingClientRect();
+            return {
+                x: e.clientX - rect.left,
+                y: e.clientY - rect.top
+            };
+        }
+
+        // Мышь
+        let isDragging = false;
+        let lastMouse = { x: 0, y: 0 };
+
+        canvas.addEventListener('mousedown', (e) => {
+            if (!imgLoaded) return;
+            isDragging = true;
+            const pos = getCanvasPos(e);
+            lastMouse = pos;
+            baseOffsetX = offsetX;
+            baseOffsetY = offsetY;
+            canvas.style.cursor = 'grabbing';
+        });
+
+        window.addEventListener('mousemove', (e) => {
+            if (!isDragging) return;
+            const pos = getCanvasPos(e);
+            const dx = pos.x - lastMouse.x;
+            const dy = pos.y - lastMouse.y;
+            offsetX = baseOffsetX + dx;
+            offsetY = baseOffsetY + dy;
+            redraw();
+        });
+
+        window.addEventListener('mouseup', () => {
+            if (isDragging) {
+                isDragging = false;
+                canvas.style.cursor = 'grab';
+                baseOffsetX = offsetX;
+                baseOffsetY = offsetY;
+            }
+        });
+
+        canvas.addEventListener('wheel', (e) => {
+            if (!imgLoaded) return;
+            e.preventDefault();
+            const pos = getCanvasPos(e);
+            const zoomFactor = 1.1;
+            const oldScale = scale;
+            const newScale = e.deltaY < 0 ? scale * zoomFactor : scale / zoomFactor;
+            // ограничим зум (0.5x – 5x от базового)
+            const minScale = baseScale * 0.5;
+            const maxScale = baseScale * 5;
+            if (newScale < minScale || newScale > maxScale) return;
+            scale = newScale;
+            // Корректируем смещение, чтобы точка под курсором осталась на месте
+            const ratio = scale / oldScale;
+            offsetX = pos.x - ratio * (pos.x - offsetX);
+            offsetY = pos.y - ratio * (pos.y - offsetY);
+            baseOffsetX = offsetX;
+            baseOffsetY = offsetY;
+            baseScale = scale;
+            redraw();
+        }, { passive: false });
+
+        canvas.style.cursor = imgLoaded ? 'grab' : 'default';
+
+        // Тач-события
+        let touchMode = null; // 'drag' или 'pinch'
+        let touchStartDist = 0;
+        let touchStartMid = { x: 0, y: 0 };
+        let touchStartScale = 1;
+        let touchStartOffsetX = 0;
+        let touchStartOffsetY = 0;
+        let lastTouchMid = { x: 0, y: 0 };
+
+        function getTouchDist(touches) {
+            const dx = touches[0].clientX - touches[1].clientX;
+            const dy = touches[0].clientY - touches[1].clientY;
+            return Math.sqrt(dx*dx + dy*dy);
+        }
+
+        function getTouchMid(touches) {
+            return {
+                x: (touches[0].clientX + touches[1].clientX) / 2,
+                y: (touches[0].clientY + touches[1].clientY) / 2
+            };
+        }
+
+        canvas.addEventListener('touchstart', (e) => {
+            if (!imgLoaded) return;
+            e.preventDefault();
+            const touches = e.touches;
+            if (touches.length === 1) {
+                touchMode = 'drag';
+                const pos = getCanvasPos(touches[0]);
+                lastTouchMid = pos;
+                baseOffsetX = offsetX;
+                baseOffsetY = offsetY;
+            } else if (touches.length === 2) {
+                touchMode = 'pinch';
+                touchStartDist = getTouchDist(touches);
+                touchStartMid = getTouchMid(touches);
+                // переводим середину в координаты холста
+                const rect = canvas.getBoundingClientRect();
+                touchStartMid = {
+                    x: touchStartMid.x - rect.left,
+                    y: touchStartMid.y - rect.top
+                };
+                lastTouchMid = touchStartMid;
+                touchStartScale = scale;
+                touchStartOffsetX = offsetX;
+                touchStartOffsetY = offsetY;
+            }
+        }, { passive: false });
+
+        canvas.addEventListener('touchmove', (e) => {
+            if (!imgLoaded || !touchMode) return;
+            e.preventDefault();
+            const touches = e.touches;
+            if (touchMode === 'drag' && touches.length === 1) {
+                const pos = getCanvasPos(touches[0]);
+                const dx = pos.x - lastTouchMid.x;
+                const dy = pos.y - lastTouchMid.y;
+                offsetX = baseOffsetX + dx;
+                offsetY = baseOffsetY + dy;
+                redraw();
+            } else if (touchMode === 'pinch' && touches.length === 2) {
+                const newDist = getTouchDist(touches);
+                if (touchStartDist === 0) return;
+                const newScale = touchStartScale * (newDist / touchStartDist);
+                const minScale = baseScale * 0.5;
+                const maxScale = baseScale * 5;
+                if (newScale < minScale || newScale > maxScale) return;
+                scale = newScale;
+                const currentMid = getTouchMid(touches);
+                const rect = canvas.getBoundingClientRect();
+                const mid = {
+                    x: currentMid.x - rect.left,
+                    y: currentMid.y - rect.top
+                };
+                const ratio = scale / touchStartScale;
+                offsetX = mid.x - ratio * (touchStartMid.x - touchStartOffsetX);
+                offsetY = mid.y - ratio * (touchStartMid.y - touchStartOffsetY);
+                redraw();
+            }
+        }, { passive: false });
+
+        canvas.addEventListener('touchend', (e) => {
+            touchMode = null;
+            baseOffsetX = offsetX;
+            baseOffsetY = offsetY;
+            baseScale = scale;
+        });
+
+        // ========== Скачивание 4 частей ==========
+        function downloadQuadrant(canvas, idx, size, callback) {
+            const S = size;
+            const fullSize = S * 2;
+            const offCanvas = document.createElement('canvas');
+            offCanvas.width = fullSize;
+            offCanvas.height = fullSize;
+            const offCtx = offCanvas.getContext('2d');
+
+            // Рисуем полное изображение с теми же трансформациями, но без сетки
+            offCtx.save();
+            const scaleOutput = fullSize / LOGICAL_SIZE;
+            offCtx.translate(offsetX * scaleOutput / LOGICAL_SIZE * fullSize, offsetY * scaleOutput / LOGICAL_SIZE * fullSize); // упрощённо
+            // точное отображение: преобразуем логические координаты [0,LOGICAL_SIZE] -> [0,fullSize]
+            offCtx.scale(scaleOutput, scaleOutput);
+            offCtx.translate(offsetX, offsetY);
+            offCtx.scale(scale, scale);
+            offCtx.drawImage(img, 0, 0, img.width, img.height);
+            offCtx.restore();
+
+            // Определяем строку и столбец
+            const row = Math.floor(idx / 2); // 0 или 1
+            const col = idx % 2;
+            const sx = col * S;
+            const sy = row * S;
+
+            const quadCanvas = document.createElement('canvas');
+            quadCanvas.width = S;
+            quadCanvas.height = S;
+            const quadCtx = quadCanvas.getContext('2d');
+            quadCtx.drawImage(offCanvas, sx, sy, S, S, 0, 0, S, S);
+
+            quadCanvas.toBlob((blob) => {
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `part_${row}_${col}_${S}x${S}.png`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                if (callback) callback();
+            }, 'image/png');
+        }
+
+        downloadBtn.addEventListener('click', () => {
+            if (!imgLoaded) {
+                statusDiv.textContent = 'Сначала загрузите изображение';
+                return;
+            }
+            const sizeRadio = document.querySelector('input[name="size"]:checked');
+            const targetSize = parseInt(sizeRadio.value, 10);
+            statusDiv.textContent = 'Скачивание...';
+            let completed = 0;
+            function next() {
+                if (completed < 4) {
+                    downloadQuadrant(null, completed, targetSize, () => {
+                        completed++;
+                        if (completed < 4) {
+                            setTimeout(next, 200); // задержка, чтобы браузер не блокировал
+                        } else {
+                            statusDiv.textContent = 'Готово! Скачано 4 файла.';
+                        }
+                    });
+                }
+            }
+            next();
+        });
+
+        // Service Worker
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('sw.js').then(reg => {
+                    console.log('SW registered');
+                }).catch(err => {
+                    console.error('SW registration failed', err);
+                });
+            });
+        }
+
+        // При изменении dpr (например, увеличение масштаба в ОС)
+        window.matchMedia(`(resolution: ${dpr}dppx)`).addEventListener('change', () => {
+            dpr = window.devicePixelRatio || 1;
+            resizeCanvas();
+            redraw();
+        });
+    </script>
+</body>
+</html>
