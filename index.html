@@ -14,7 +14,6 @@
             margin: 0;
             padding: 0;
         }
-
         html, body {
             width: 100%;
             height: 100%;
@@ -32,7 +31,6 @@
             -webkit-user-select: none;
             touch-action: none;
         }
-
         .app {
             display: flex;
             flex-direction: column;
@@ -43,14 +41,12 @@
             padding: 12px;
             gap: 16px;
         }
-
         h1 {
             font-size: 1.5rem;
             font-weight: 600;
             color: #4A90E2;
             margin-top: 8px;
         }
-
         .canvas-wrapper {
             position: relative;
             width: min(80vw, calc(100vh - 180px), 400px);
@@ -59,13 +55,11 @@
             background: white;
             flex-shrink: 0;
         }
-
         canvas {
             display: block;
             width: 100%;
             height: 100%;
         }
-
         .controls {
             display: flex;
             flex-direction: column;
@@ -73,7 +67,6 @@
             gap: 12px;
             width: 100%;
         }
-
         .file-label {
             background: #4A90E2;
             color: white;
@@ -83,24 +76,27 @@
             cursor: pointer;
             display: inline-block;
         }
-
         input[type="file"] {
             display: none;
         }
-
         .size-selector {
             display: flex;
             gap: 16px;
             font-size: 0.95rem;
         }
-
         .size-selector label {
             display: flex;
             align-items: center;
             gap: 6px;
             cursor: pointer;
         }
-
+        .sharpen-option {
+            display: none;
+            align-items: center;
+            gap: 6px;
+            font-size: 0.9rem;
+            color: #333;
+        }
         .download-btn {
             background: #27ae60;
             color: white;
@@ -111,11 +107,9 @@
             font-weight: 600;
             cursor: pointer;
         }
-
         .download-btn:active {
             background: #219a52;
         }
-
         .status {
             font-size: 0.85rem;
             color: #666;
@@ -139,6 +133,10 @@
                 <label>
                     <input type="radio" name="size" value="512"> 512×512 (стикеры)
                 </label>
+            </div>
+            <div class="sharpen-option" id="sharpenOption">
+                <input type="checkbox" id="sharpenCheck" checked>
+                <label for="sharpenCheck">Усилить резкость</label>
             </div>
             <button class="download-btn" id="downloadBtn">Скачать 4 части</button>
             <div class="status" id="status"></div>
@@ -183,17 +181,24 @@
         const fileInput = document.getElementById('fileInput');
         const downloadBtn = document.getElementById('downloadBtn');
         const statusDiv = document.getElementById('status');
+        const sharpenOption = document.getElementById('sharpenOption');
+        const sharpenCheck = document.getElementById('sharpenCheck');
 
-        const LOGICAL_SIZE = 400;    // внутренняя координатная сетка редактора (0..400)
+        const LOGICAL_SIZE = 400;
         let dpr = window.devicePixelRatio || 1;
         let img = null;
         let imgLoaded = false;
-
-        // Пользовательские трансформации (в логических единицах)
         let scale = 1;
         let offsetX = 0;
         let offsetY = 0;
-        let baseScale = 1;           // масштаб вписывания
+        let baseScale = 1;
+
+        // Показывать чекбокс резкости только для 100x100
+        document.querySelectorAll('input[name="size"]').forEach(radio => {
+            radio.addEventListener('change', (e) => {
+                sharpenOption.style.display = e.target.value === '100' ? 'flex' : 'none';
+            });
+        });
 
         // ========== Размер холста ==========
         function resizeCanvas() {
@@ -204,11 +209,7 @@
             canvas.style.width = size + 'px';
             canvas.style.height = size + 'px';
         }
-
-        window.addEventListener('resize', () => {
-            resizeCanvas();
-            redraw();
-        });
+        window.addEventListener('resize', () => { resizeCanvas(); redraw(); });
         resizeCanvas();
 
         // ========== Загрузка изображения ==========
@@ -237,30 +238,24 @@
         // ========== Отрисовка редактора ==========
         function redraw() {
             if (!canvas || !ctx) return;
-            const w = canvas.width;   // физические пиксели
-            const h = canvas.height;
-
+            const w = canvas.width, h = canvas.height;
             ctx.clearRect(0, 0, w, h);
-
             if (img && imgLoaded) {
                 ctx.save();
-                // Масштабируем логические координаты на весь физический холст
                 ctx.scale(w / LOGICAL_SIZE, h / LOGICAL_SIZE);
-                // Применяем пользовательские смещение и зум (в логических единицах)
                 ctx.translate(offsetX, offsetY);
                 ctx.scale(scale, scale);
-                // Рисуем изображение в его исходных пикселях
+                ctx.imageSmoothingQuality = 'high';
                 ctx.drawImage(img, 0, 0, img.width, img.height);
                 ctx.restore();
             }
-
-            // Пунктирное перекрестие (поверх изображения)
+            // Пунктирное перекрестие
             ctx.save();
-            ctx.scale(w / LOGICAL_SIZE, h / LOGICAL_SIZE);   // переход к логической сетке
+            ctx.scale(w / LOGICAL_SIZE, h / LOGICAL_SIZE);
             const half = LOGICAL_SIZE / 2;
             ctx.beginPath();
             ctx.strokeStyle = 'rgba(0, 0, 0, 0.45)';
-            ctx.lineWidth = 2;                // 2 логических пикселя
+            ctx.lineWidth = 2;
             ctx.setLineDash([8, 6]);
             ctx.moveTo(half, 0);
             ctx.lineTo(half, LOGICAL_SIZE);
@@ -271,7 +266,7 @@
             ctx.restore();
         }
 
-        // ========== Конвертация координат касания/мыши в логические ==========
+        // ========== Координаты в логических единицах ==========
         function getCanvasPos(clientX, clientY) {
             const rect = canvas.getBoundingClientRect();
             return {
@@ -280,17 +275,14 @@
             };
         }
 
-        // ========== Перетаскивание (pan) ==========
-        let isDragging = false;
-        let lastMouse = { x: 0, y: 0 };
-
+        // ========== Pan & Zoom (мышь и тач) ==========
+        let isDragging = false, lastMouse = { x: 0, y: 0 };
         canvas.addEventListener('mousedown', (e) => {
             if (!imgLoaded) return;
             isDragging = true;
             lastMouse = getCanvasPos(e.clientX, e.clientY);
             canvas.style.cursor = 'grabbing';
         });
-
         window.addEventListener('mousemove', (e) => {
             if (!isDragging) return;
             const pos = getCanvasPos(e.clientX, e.clientY);
@@ -299,15 +291,7 @@
             lastMouse = pos;
             redraw();
         });
-
-        window.addEventListener('mouseup', () => {
-            if (isDragging) {
-                isDragging = false;
-                canvas.style.cursor = 'grab';
-            }
-        });
-
-        // Zoom колёсиком
+        window.addEventListener('mouseup', () => { isDragging = false; canvas.style.cursor = 'grab'; });
         canvas.addEventListener('wheel', (e) => {
             if (!imgLoaded) return;
             e.preventDefault();
@@ -315,8 +299,7 @@
             const zoomFactor = 1.1;
             const oldScale = scale;
             const newScale = e.deltaY < 0 ? scale * zoomFactor : scale / zoomFactor;
-            const minScale = baseScale * 0.5;
-            const maxScale = baseScale * 5;
+            const minScale = baseScale * 0.5, maxScale = baseScale * 5;
             if (newScale < minScale || newScale > maxScale) return;
             scale = newScale;
             offsetX = pos.x - (newScale / oldScale) * (pos.x - offsetX);
@@ -324,20 +307,9 @@
             redraw();
         }, { passive: false });
 
-        // ========== Touch-события ==========
-        let touchMode = null;
-        let touchStartDist = 0;
-        let touchStartMid = { x: 0, y: 0 };
-        let touchStartScale = 1;
-        let touchStartOffsetX = 0;
-        let touchStartOffsetY = 0;
-
-        function getTouchDist(touches) {
-            const dx = touches[0].clientX - touches[1].clientX;
-            const dy = touches[0].clientY - touches[1].clientY;
-            return Math.sqrt(dx * dx + dy * dy);
-        }
-
+        // Тач-обработка (сокращено для компактности, но полностью рабочая)
+        let touchMode = null, touchStartDist = 0, touchStartMid = { x: 0, y: 0 }, touchStartScale = 1, touchStartOffsetX = 0, touchStartOffsetY = 0;
+        function getTouchDist(touches) { const dx = touches[0].clientX - touches[1].clientX; const dy = touches[0].clientY - touches[1].clientY; return Math.sqrt(dx*dx+dy*dy); }
         canvas.addEventListener('touchstart', (e) => {
             if (!imgLoaded) return;
             e.preventDefault();
@@ -351,14 +323,10 @@
                 touchStartScale = scale;
                 touchStartOffsetX = offsetX;
                 touchStartOffsetY = offsetY;
-                const mid = {
-                    x: (touches[0].clientX + touches[1].clientX) / 2,
-                    y: (touches[0].clientY + touches[1].clientY) / 2
-                };
+                const mid = { x: (touches[0].clientX + touches[1].clientX)/2, y: (touches[0].clientY + touches[1].clientY)/2 };
                 touchStartMid = getCanvasPos(mid.x, mid.y);
             }
         }, { passive: false });
-
         canvas.addEventListener('touchmove', (e) => {
             if (!imgLoaded || !touchMode) return;
             e.preventDefault();
@@ -374,61 +342,107 @@
                 if (touchStartDist === 0) return;
                 const ratio = newDist / touchStartDist;
                 const newScale = touchStartScale * ratio;
-                const minScale = baseScale * 0.5;
-                const maxScale = baseScale * 5;
-                if (newScale < minScale || newScale > maxScale) return;
+                if (newScale < baseScale*0.5 || newScale > baseScale*5) return;
                 scale = newScale;
-                const mid = {
-                    x: (touches[0].clientX + touches[1].clientX) / 2,
-                    y: (touches[0].clientY + touches[1].clientY) / 2
-                };
+                const mid = { x: (touches[0].clientX + touches[1].clientX)/2, y: (touches[0].clientY + touches[1].clientY)/2 };
                 const midCanvas = getCanvasPos(mid.x, mid.y);
                 offsetX = midCanvas.x - ratio * (touchStartMid.x - touchStartOffsetX);
                 offsetY = midCanvas.y - ratio * (touchStartMid.y - touchStartOffsetY);
                 redraw();
             }
         }, { passive: false });
+        canvas.addEventListener('touchend', () => { touchMode = null; });
 
-        canvas.addEventListener('touchend', () => {
-            touchMode = null;
-        });
+        // ========== Улучшенная нарезка с высоким качеством ==========
+        function applySharpen(imageData, strength = 0.5) {
+            // Unsharp mask: копия, размытие, смешивание с original
+            const w = imageData.width, h = imageData.height;
+            const blurred = new Uint8ClampedArray(imageData.data);
+            // Простой box blur 3x3
+            const blurKernel = [1,1,1,1,1,1,1,1,1];
+            const kernelWeight = 9;
+            for (let y = 1; y < h-1; y++) {
+                for (let x = 1; x < w-1; x++) {
+                    let r=0,g=0,b=0;
+                    for (let ky=-1; ky<=1; ky++) {
+                        for (let kx=-1; kx<=1; kx++) {
+                            const idx = ((y+ky)*w + (x+kx))*4;
+                            r += imageData.data[idx];
+                            g += imageData.data[idx+1];
+                            b += imageData.data[idx+2];
+                        }
+                    }
+                    const idx = (y*w + x)*4;
+                    blurred[idx] = r/kernelWeight;
+                    blurred[idx+1] = g/kernelWeight;
+                    blurred[idx+2] = b/kernelWeight;
+                }
+            }
+            // Смешивание: result = original + strength * (original - blurred)
+            for (let i = 0; i < imageData.data.length; i+=4) {
+                for (let c=0; c<3; c++) {
+                    const orig = imageData.data[i+c];
+                    const blur = blurred[i+c];
+                    const sharp = orig + strength * (orig - blur);
+                    imageData.data[i+c] = Math.min(255, Math.max(0, Math.round(sharp)));
+                }
+            }
+        }
 
-        // ========== Скачивание 4 частей (по видимой области редактора) ==========
         function downloadQuadrants(targetSize) {
             if (!imgLoaded) {
                 statusDiv.textContent = 'Сначала загрузите изображение';
                 return;
             }
-            statusDiv.textContent = 'Нарезка...';
+            statusDiv.textContent = 'Подготовка высокого качества...';
 
-            const fullSize = targetSize * 2;          // физический размер итогового холста
+            // Используем холст в 4 раза больше целевого размера (2x по каждой стороне)
+            const fullSize = targetSize * 4;
             const offCanvas = document.createElement('canvas');
             offCanvas.width = fullSize;
             offCanvas.height = fullSize;
             const offCtx = offCanvas.getContext('2d');
 
-            // Матрица перехода от координат изображения к offscreen-холсту
-            // Изображение рисуем с теми же scale и offset, что видим в редакторе.
+            // Рендерим изображение с теми же трансформациями, что в редакторе
             const scaleToFull = fullSize / LOGICAL_SIZE;
             offCtx.setTransform(
                 scale * scaleToFull, 0,
                 0, scale * scaleToFull,
                 offsetX * scaleToFull, offsetY * scaleToFull
             );
+            offCtx.imageSmoothingQuality = 'high';
             offCtx.drawImage(img, 0, 0, img.width, img.height);
-            // Сбрасываем матрицу, чтобы затем выреза́ть части
             offCtx.setTransform(1, 0, 0, 1, 0, 0);
 
-            function downloadOne(row, col, callback) {
-                const quadCanvas = document.createElement('canvas');
-                quadCanvas.width = targetSize;
-                quadCanvas.height = targetSize;
-                const quadCtx = quadCanvas.getContext('2d');
-                const sx = col * targetSize;
-                const sy = row * targetSize;
-                quadCtx.drawImage(offCanvas, sx, sy, targetSize, targetSize, 0, 0, targetSize, targetSize);
+            const useSharpen = targetSize === 100 && sharpenCheck.checked;
 
-                quadCanvas.toBlob((blob) => {
+            function downloadOne(row, col, callback) {
+                // Вырезаем область увеличенного размера (targetSize*2 x targetSize*2)
+                const highResSize = targetSize * 2;
+                const highResCanvas = document.createElement('canvas');
+                highResCanvas.width = highResSize;
+                highResCanvas.height = highResSize;
+                const highCtx = highResCanvas.getContext('2d');
+                const sx = col * highResSize;
+                const sy = row * highResSize;
+                highCtx.drawImage(offCanvas, sx, sy, highResSize, highResSize, 0, 0, highResSize, highResSize);
+
+                // Уменьшаем до целевого размера с высоким качеством
+                const finalCanvas = document.createElement('canvas');
+                finalCanvas.width = targetSize;
+                finalCanvas.height = targetSize;
+                const finalCtx = finalCanvas.getContext('2d');
+                finalCtx.imageSmoothingQuality = 'high';
+                finalCtx.drawImage(highResCanvas, 0, 0, highResSize, highResSize, 0, 0, targetSize, targetSize);
+
+                // При необходимости усиливаем резкость
+                if (useSharpen) {
+                    const imageData = finalCtx.getImageData(0, 0, targetSize, targetSize);
+                    applySharpen(imageData, 0.5); // умеренное повышение
+                    finalCtx.putImageData(imageData, 0, 0);
+                }
+
+                finalCanvas.toBlob((blob) => {
                     const url = URL.createObjectURL(blob);
                     const a = document.createElement('a');
                     a.href = url;
@@ -449,7 +463,7 @@
                     downloadOne(row, col, () => {
                         completed++;
                         if (completed < 4) {
-                            setTimeout(step, 200);
+                            setTimeout(step, 150);
                         } else {
                             statusDiv.textContent = `Готово! Скачано 4 части по ${targetSize}×${targetSize}px`;
                         }
@@ -468,13 +482,10 @@
         // ========== Service Worker ==========
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
-                navigator.serviceWorker.register('sw.js').catch(err => {
-                    console.warn('SW registration failed', err);
-                });
+                navigator.serviceWorker.register('sw.js').catch(err => console.warn('SW registration failed', err));
             });
         }
 
-        // Обновление при изменении devicePixelRatio
         window.matchMedia(`(resolution: ${dpr}dppx)`).addEventListener('change', () => {
             dpr = window.devicePixelRatio || 1;
             resizeCanvas();
