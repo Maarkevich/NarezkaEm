@@ -184,7 +184,7 @@
         const downloadBtn = document.getElementById('downloadBtn');
         const statusDiv = document.getElementById('status');
 
-        const LOGICAL_SIZE = 400;    // координатная сетка редактора (0..400)
+        const LOGICAL_SIZE = 400;    // внутренняя координатная сетка редактора (0..400)
         let dpr = window.devicePixelRatio || 1;
         let img = null;
         let imgLoaded = false;
@@ -220,7 +220,6 @@
                 img = new Image();
                 img.onload = () => {
                     imgLoaded = true;
-                    // Вписываем изображение в квадрат (по большей стороне)
                     const maxSide = Math.max(img.width, img.height);
                     baseScale = LOGICAL_SIZE / maxSide;
                     scale = baseScale;
@@ -238,31 +237,30 @@
         // ========== Отрисовка редактора ==========
         function redraw() {
             if (!canvas || !ctx) return;
-            const w = canvas.width;
+            const w = canvas.width;   // физические пиксели
             const h = canvas.height;
+
             ctx.clearRect(0, 0, w, h);
 
             if (img && imgLoaded) {
                 ctx.save();
-                // Перевод в логические координаты редактора
-                const sx = w / LOGICAL_SIZE / dpr;
-                const sy = h / LOGICAL_SIZE / dpr;
-                ctx.scale(sx, sy);
+                // Масштабируем логические координаты на весь физический холст
+                ctx.scale(w / LOGICAL_SIZE, h / LOGICAL_SIZE);
+                // Применяем пользовательские смещение и зум (в логических единицах)
                 ctx.translate(offsetX, offsetY);
                 ctx.scale(scale, scale);
+                // Рисуем изображение в его исходных пикселях
                 ctx.drawImage(img, 0, 0, img.width, img.height);
                 ctx.restore();
             }
 
-            // Пунктирное перекрестие (всегда поверх, хорошо видно)
+            // Пунктирное перекрестие (поверх изображения)
             ctx.save();
-            const sx = canvas.width / LOGICAL_SIZE / dpr;
-            const sy = canvas.height / LOGICAL_SIZE / dpr;
-            ctx.scale(sx, sy);
+            ctx.scale(w / LOGICAL_SIZE, h / LOGICAL_SIZE);   // переход к логической сетке
             const half = LOGICAL_SIZE / 2;
             ctx.beginPath();
             ctx.strokeStyle = 'rgba(0, 0, 0, 0.45)';
-            ctx.lineWidth = 2;                // толщина 2 логических пикселя
+            ctx.lineWidth = 2;                // 2 логических пикселя
             ctx.setLineDash([8, 6]);
             ctx.moveTo(half, 0);
             ctx.lineTo(half, LOGICAL_SIZE);
@@ -273,7 +271,7 @@
             ctx.restore();
         }
 
-        // ========== Координаты курсора/пальца в логических единицах ==========
+        // ========== Конвертация координат касания/мыши в логические ==========
         function getCanvasPos(clientX, clientY) {
             const rect = canvas.getBoundingClientRect();
             return {
@@ -282,7 +280,7 @@
             };
         }
 
-        // ========== Pan (перетаскивание) ==========
+        // ========== Перетаскивание (pan) ==========
         let isDragging = false;
         let lastMouse = { x: 0, y: 0 };
 
@@ -395,7 +393,7 @@
             touchMode = null;
         });
 
-        // ========== Скачивание 4 частей (исправленная логика) ==========
+        // ========== Скачивание 4 частей (по видимой области редактора) ==========
         function downloadQuadrants(targetSize) {
             if (!imgLoaded) {
                 statusDiv.textContent = 'Сначала загрузите изображение';
@@ -403,15 +401,14 @@
             }
             statusDiv.textContent = 'Нарезка...';
 
-            const fullSize = targetSize * 2;          // итоговый холст, который будем резать
+            const fullSize = targetSize * 2;          // физический размер итогового холста
             const offCanvas = document.createElement('canvas');
             offCanvas.width = fullSize;
             offCanvas.height = fullSize;
             const offCtx = offCanvas.getContext('2d');
 
-            // Матрица преобразования из координат изображения (пиксели) в offscreen (fullSize x fullSize)
-            // Логика: точка изображения (ix, iy) -> логические: (ix*scale + offsetX, iy*scale + offsetY)
-            // -> offscreen: ( (ix*scale + offsetX) * (fullSize/LOGICAL_SIZE), ... )
+            // Матрица перехода от координат изображения к offscreen-холсту
+            // Изображение рисуем с теми же scale и offset, что видим в редакторе.
             const scaleToFull = fullSize / LOGICAL_SIZE;
             offCtx.setTransform(
                 scale * scaleToFull, 0,
@@ -419,10 +416,9 @@
                 offsetX * scaleToFull, offsetY * scaleToFull
             );
             offCtx.drawImage(img, 0, 0, img.width, img.height);
-            // Восстанавливаем единичную матрицу для последующего вырезания
+            // Сбрасываем матрицу, чтобы затем выреза́ть части
             offCtx.setTransform(1, 0, 0, 1, 0, 0);
 
-            // Функция скачивания одного квадранта
             function downloadOne(row, col, callback) {
                 const quadCanvas = document.createElement('canvas');
                 quadCanvas.width = targetSize;
@@ -478,7 +474,7 @@
             });
         }
 
-        // Изменение DPR (например, при масштабировании ОС)
+        // Обновление при изменении devicePixelRatio
         window.matchMedia(`(resolution: ${dpr}dppx)`).addEventListener('change', () => {
             dpr = window.devicePixelRatio || 1;
             resizeCanvas();
